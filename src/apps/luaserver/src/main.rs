@@ -1,42 +1,86 @@
+use std::{fs, sync::{Arc, RwLock}};
+
 use anyhow::Result;
 use axum::{
     extract::State, http::StatusCode, routing::{get, post}, Json, Router
 };
-// use mlua::prelude::*;
+use mlua::prelude::*;
 use serde::{Deserialize, Serialize};
 // use std::{collections::HashMap, fs};
 use tokio::signal;
 
 
-struct AppManager {
+#[derive(Clone)]
+struct AppManager<'a> {
+    lua_man: Arc<RwLock<LuaStateManager<'a>>>,
 }
 
-impl Clone for AppManager {
-    fn clone(&self) -> Self {
+impl<'a> AppManager<'a> {
+    fn new() -> Self {
         AppManager {
+            lua_man: Arc::new(RwLock::new(LuaStateManager::new())),
+        }
+    }
+
+    fn call_lua(&mut self) -> f64 {
+        let ro = self.lua_man.read().unwrap().clone();
+        if ro.loaded {
+            let luafn: LuaFunction = ro.luaval.as_table().unwrap().get::<_, LuaFunction>("test").unwrap();
+            let result: f64 = luafn.call(()).unwrap();
+            result
+        } else {
+            let lua = Lua::new();
+            let testluacontent = fs::read_to_string("test.lua").unwrap();
+            let mut ro = self.lua_man.write().unwrap().clone();
+            let result: LuaValue = lua
+                .load(testluacontent.as_str())
+                .eval::<LuaValue>()
+                .unwrap();
+
+            let luafn: LuaFunction = result.as_table().unwrap().get::<_, LuaFunction>("test").unwrap();
+            ro.luaval = result.clone();
+            let result: f64 = luafn.call(()).unwrap();
+            result
         }
     }
 }
 
-impl AppManager {
+struct LuaStateManager<'a> {
+    luaval: LuaValue<'a>,
+    loaded: bool,
+}
+
+impl<'a> Clone for LuaStateManager<'a> {
+    fn clone(&self) -> Self {
+        LuaStateManager {
+            luaval: LuaValue::Nil,
+            loaded: false,
+        }
+    }
+}
+
+impl<'a> LuaStateManager<'a> {
     fn new() -> Self {
-        AppManager {
+        LuaStateManager {
+            luaval: LuaValue::Nil,
+            loaded: false,
         }
     }
 
     fn free(&mut self) {
+        // self.lua.drop();
     }
 }
 
-impl Drop for AppManager {
+impl<'a> Drop for LuaStateManager<'a> {
     fn drop(&mut self) {
         self.free();
     }
 }
 
 // Implement Send and Sync manually (requires reasoning about thread safety)
-unsafe impl Send for AppManager {}
-unsafe impl Sync for AppManager {}
+unsafe impl<'a> Send for LuaStateManager<'a> {}
+unsafe impl<'a> Sync for LuaStateManager<'a> {}
 
 
 
@@ -88,8 +132,11 @@ async fn shutdown_signal() {
 }
 
 // basic handler that responds with a static string
-async fn testapi(State(_appman): State<AppManager>) -> (StatusCode, String) {
-    (StatusCode::OK, "Hello, Test!!".to_string())
+async fn testapi<'a>(State(mut appman): State<AppManager<'a>>) -> (StatusCode, String) {
+    let fval = appman.call_lua();
+    // let msg = "Hello, Test !!!".to_string();
+    let msg = format!("Hello, Test !!! {}", fval);
+    (StatusCode::OK, msg)
 }
 
 // basic handler that responds with a static string
