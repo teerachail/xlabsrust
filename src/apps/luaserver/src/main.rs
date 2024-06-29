@@ -1,11 +1,44 @@
 use anyhow::Result;
 use axum::{
-    http::StatusCode, routing::{get, post}, Json, Router
+    extract::State, http::StatusCode, routing::{get, post}, Json, Router
 };
 // use mlua::prelude::*;
 use serde::{Deserialize, Serialize};
 // use std::{collections::HashMap, fs};
 use tokio::signal;
+
+
+struct AppManager {
+}
+
+impl Clone for AppManager {
+    fn clone(&self) -> Self {
+        AppManager {
+        }
+    }
+}
+
+impl AppManager {
+    fn new() -> Self {
+        AppManager {
+        }
+    }
+
+    fn free(&mut self) {
+    }
+}
+
+impl Drop for AppManager {
+    fn drop(&mut self) {
+        self.free();
+    }
+}
+
+// Implement Send and Sync manually (requires reasoning about thread safety)
+unsafe impl Send for AppManager {}
+unsafe impl Sync for AppManager {}
+
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,8 +49,10 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // `GET /` goes to `root`
         .route("/", get(root))
+        .route("/test", get(testapi))
         // `POST /users` goes to `create_user`
-        .route("/users", post(create_user));
+        .route("/users", post(create_user))
+        .with_state(AppManager::new());
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
@@ -50,6 +85,11 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+}
+
+// basic handler that responds with a static string
+async fn testapi(State(_appman): State<AppManager>) -> (StatusCode, String) {
+    (StatusCode::OK, "Hello, Test!!".to_string())
 }
 
 // basic handler that responds with a static string
