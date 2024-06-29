@@ -116,6 +116,7 @@ unsafe impl<'a> Sync for LuaStateManager<'a> {}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let appman = AppManager::new().await;
     // initialize tracing
     tracing_subscriber::fmt::init();
 
@@ -127,13 +128,16 @@ async fn main() -> Result<()> {
         // `POST /users` goes to `create_user`
         .route("/users", post(create_user))
         .route("/people", get(list_people).post(create_person))
-        .with_state(AppManager::new().await);
+        .with_state(appman);
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    // Help reduce error message from db
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     Ok(())
 }
