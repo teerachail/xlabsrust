@@ -1,31 +1,48 @@
-use std::{fs, sync::{Arc, RwLock}};
-
 use anyhow::Result;
 use axum::{
-    extract::State, http::StatusCode, routing::{get, post}, Json, Router
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
 };
 use mlua::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    sync::{Arc, RwLock},
+};
+use surrealdb::engine::local::{Db, Mem};
+use surrealdb::Surreal;
 // use std::{collections::HashMap, fs};
+use serde_json::Value as JsonValue;
 use tokio::signal;
-
 
 #[derive(Clone)]
 struct AppManager<'a> {
     lua_man: Arc<RwLock<LuaStateManager<'a>>>,
+    db: Arc<Surreal<Db>>,
 }
 
 impl<'a> AppManager<'a> {
-    fn new() -> Self {
+    async fn new() -> Self {
+        let db = Surreal::new::<Mem>(()).await.unwrap();
+        let _ = db.use_ns("test").use_db("test").await.unwrap();
+        let db = Arc::new(db);
         AppManager {
             lua_man: Arc::new(RwLock::new(LuaStateManager::new())),
+            db,
         }
     }
 
     fn call_lua(&mut self) -> f64 {
         let ro = self.lua_man.read().unwrap().clone();
         if ro.loaded {
-            let luafn: LuaFunction = ro.luaval.as_table().unwrap().get::<_, LuaFunction>("test").unwrap();
+            let luafn: LuaFunction = ro
+                .luaval
+                .as_table()
+                .unwrap()
+                .get::<_, LuaFunction>("test")
+                .unwrap();
             let result: f64 = luafn.call(()).unwrap();
             result
         } else {
@@ -37,11 +54,26 @@ impl<'a> AppManager<'a> {
                 .eval::<LuaValue>()
                 .unwrap();
 
-            let luafn: LuaFunction = result.as_table().unwrap().get::<_, LuaFunction>("test").unwrap();
+            let luafn: LuaFunction = result
+                .as_table()
+                .unwrap()
+                .get::<_, LuaFunction>("test")
+                .unwrap();
             ro.luaval = result.clone();
             let result: f64 = luafn.call(()).unwrap();
             result
         }
+    }
+
+    async fn list(&self) -> Result<Vec<JsonValue>> {
+        // Ok(vec![])
+        let people = self.db.select("person").await?;
+        Ok(people)
+    }
+
+    async fn save(&self, person: JsonValue) -> Result<Vec<JsonValue>> {
+        let created = self.db.create("person").content(person).await?;
+        Ok(created)
     }
 }
 
@@ -82,10 +114,9 @@ impl<'a> Drop for LuaStateManager<'a> {
 unsafe impl<'a> Send for LuaStateManager<'a> {}
 unsafe impl<'a> Sync for LuaStateManager<'a> {}
 
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
+    let appman = AppManager::new().await;
     // initialize tracing
     tracing_subscriber::fmt::init();
 
@@ -96,13 +127,17 @@ async fn main() -> Result<()> {
         .route("/test", get(testapi))
         // `POST /users` goes to `create_user`
         .route("/users", post(create_user))
-        .with_state(AppManager::new());
+        .route("/people", get(list_people).post(create_person))
+        .with_state(appman);
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    // Help reduce error message from db
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     Ok(())
 }
@@ -158,6 +193,21 @@ async fn create_user(
     // this will be converted into a JSON response
     // with a status code of `201 Created`
     (StatusCode::CREATED, Json(user))
+}
+
+async fn create_person<'a>(
+    State(appman): State<AppManager<'a>>,
+    Json(payload): Json<JsonValue>,
+) -> (StatusCode, Json<Vec<JsonValue>>) {
+    let people = appman.save(payload).await.unwrap();
+    (StatusCode::OK, Json(people))
+}
+
+async fn list_people<'a>(
+    State(appman): State<AppManager<'a>>,
+) -> (StatusCode, Json<Vec<JsonValue>>) {
+    let people = appman.list().await.unwrap();
+    (StatusCode::OK, Json(people))
 }
 
 // the input to our `create_user` handler
