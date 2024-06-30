@@ -3047,6 +3047,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "signedcms"
+version = "0.1.0"
+
+[[package]]
 name = "simdutf8"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
