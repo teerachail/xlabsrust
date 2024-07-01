@@ -62,6 +62,8 @@ impl<'a> AppManager<'a> {
             ro.luaval = result.clone();
             // ro.loaded = true; // This is not working, has no effect!!!
             let p = lua.to_value(&payload).unwrap();
+            let pv = p.as_table().unwrap();
+            pv.set("extra", "This is set from server!").unwrap();
             let result: String = luafn.call(p).unwrap();
             result
         }
