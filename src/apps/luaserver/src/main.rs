@@ -34,7 +34,7 @@ impl<'a> AppManager<'a> {
         }
     }
 
-    fn call_lua(&mut self) -> f64 {
+    fn call_lua(&mut self, payload: JsonValue) -> String {
         let ro = self.lua_man.read().unwrap().clone();
         if ro.loaded {
             let luafn: LuaFunction = ro
@@ -43,7 +43,7 @@ impl<'a> AppManager<'a> {
                 .unwrap()
                 .get::<_, LuaFunction>("test")
                 .unwrap();
-            let result: f64 = luafn.call(()).unwrap();
+            let result: String = luafn.call(()).unwrap();
             result
         } else {
             let lua = Lua::new();
@@ -60,7 +60,9 @@ impl<'a> AppManager<'a> {
                 .get::<_, LuaFunction>("test")
                 .unwrap();
             ro.luaval = result.clone();
-            let result: f64 = luafn.call(()).unwrap();
+            // ro.loaded = true; // This is not working, has no effect!!!
+            let p = lua.to_value(&payload).unwrap();
+            let result: String = luafn.call(p).unwrap();
             result
         }
     }
@@ -124,7 +126,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // `GET /` goes to `root`
         .route("/", get(root))
-        .route("/test", get(testapi))
+        .route("/test", post(testapi))
         // `POST /users` goes to `create_user`
         .route("/users", post(create_user))
         .route("/people", get(list_people).post(create_person))
@@ -167,8 +169,11 @@ async fn shutdown_signal() {
 }
 
 // basic handler that responds with a static string
-async fn testapi<'a>(State(mut appman): State<AppManager<'a>>) -> (StatusCode, String) {
-    let fval = appman.call_lua();
+async fn testapi<'a>(
+    State(mut appman): State<AppManager<'a>>,
+    Json(payload): Json<JsonValue>,
+) -> (StatusCode, String) {
+    let fval = appman.call_lua(payload);
     // let msg = "Hello, Test !!!".to_string();
     let msg = format!("Hello, Test !!! {}", fval);
     (StatusCode::OK, msg)
