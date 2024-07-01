@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "apps/luaserver"
+members = [ "apps/axumtel",
+    "apps/luaserver",
+    "apps/signedcms"
 ]

@@ -23,3 +23,8 @@ Content-Type: application/json
   "username": "John Doe",
   "age": 30
 }
+
+
+###
+
+GET http://localhost:3000/
