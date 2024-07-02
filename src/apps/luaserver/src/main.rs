@@ -8,8 +8,7 @@ use axum::{
 use mlua::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
-    sync::{Arc, RwLock},
+    fs, sync::{Arc, RwLock}
 };
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
@@ -17,24 +16,25 @@ use surrealdb::Surreal;
 use serde_json::Value as JsonValue;
 use tokio::signal;
 
-#[derive(Clone)]
 struct AppManager<'a> {
-    lua_man: Arc<RwLock<LuaStateManager<'a>>>,
-    db: Arc<Surreal<Db>>,
+    lua_man: RwLock<LuaStateManager<'a>>,
+    db: Surreal<Db>,
 }
+
+type AppManagerState<'a> = Arc<AppManager<'a>>;
 
 impl<'a> AppManager<'a> {
     async fn new() -> Self {
         let db = Surreal::new::<Mem>(()).await.unwrap();
         let _ = db.use_ns("test").use_db("test").await.unwrap();
-        let db = Arc::new(db);
+        let db = db;
         AppManager {
-            lua_man: Arc::new(RwLock::new(LuaStateManager::new())),
+            lua_man: RwLock::new(LuaStateManager::new()),
             db,
         }
     }
 
-    fn call_lua(&mut self, payload: JsonValue) -> String {
+    fn call_lua(&self, payload: JsonValue) -> String {
         let ro = self.lua_man.read().unwrap().clone();
         if ro.loaded {
             let luafn: LuaFunction = ro
@@ -121,8 +121,10 @@ unsafe impl<'a> Sync for LuaStateManager<'a> {}
 #[tokio::main]
 async fn main() -> Result<()> {
     let appman = AppManager::new().await;
+    let appman = Arc::new(appman);
     // initialize tracing
     tracing_subscriber::fmt::init();
+    let applive = Arc::clone(&appman);
 
     // build our application with a route
     let app = Router::new()
@@ -132,7 +134,7 @@ async fn main() -> Result<()> {
         // `POST /users` goes to `create_user`
         .route("/users", post(create_user))
         .route("/people", get(list_people).post(create_person))
-        .with_state(appman);
+        .with_state(appman.clone());
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
@@ -142,6 +144,8 @@ async fn main() -> Result<()> {
 
     // Help reduce error message from db
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    println!("{}", Arc::weak_count(&applive));
 
     Ok(())
 }
@@ -172,7 +176,7 @@ async fn shutdown_signal() {
 
 // basic handler that responds with a static string
 async fn testapi<'a>(
-    State(mut appman): State<AppManager<'a>>,
+    State(appman): State<AppManagerState<'a>>,
     Json(payload): Json<JsonValue>,
 ) -> (StatusCode, String) {
     let fval = appman.call_lua(payload);
@@ -203,7 +207,7 @@ async fn create_user(
 }
 
 async fn create_person<'a>(
-    State(appman): State<AppManager<'a>>,
+    State(appman): State<AppManagerState<'a>>,
     Json(payload): Json<JsonValue>,
 ) -> (StatusCode, Json<Vec<JsonValue>>) {
     let people = appman.save(payload).await.unwrap();
@@ -211,7 +215,7 @@ async fn create_person<'a>(
 }
 
 async fn list_people<'a>(
-    State(appman): State<AppManager<'a>>,
+    State(appman): State<AppManagerState<'a>>,
 ) -> (StatusCode, Json<Vec<JsonValue>>) {
     let people = appman.list().await.unwrap();
     (StatusCode::OK, Json(people))
